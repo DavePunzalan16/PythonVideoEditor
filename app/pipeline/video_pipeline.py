@@ -47,16 +47,17 @@ def check_ffmpeg() -> bool:
         return False
 
 
-def get_video_framerate(video_path: str) -> float:
-    """Extract the frame rate from a video file using ffprobe."""
+def get_video_info(video_path: str) -> dict:
+    """Extract frame rate, width, and height from a video file using ffprobe."""
+    info = {"framerate": 30.0, "width": None, "height": None}
     try:
         result = subprocess.run(
             [
                 "ffprobe",
                 "-v", "error",
                 "-select_streams", "v:0",
-                "-show_entries", "stream=r_frame_rate",
-                "-of", "default=noprint_wrappers=1:nokey=1",
+                "-show_entries", "stream=r_frame_rate,width,height",
+                "-of", "csv=p=0",
                 video_path,
             ],
             capture_output=True,
@@ -64,30 +65,42 @@ def get_video_framerate(video_path: str) -> float:
             timeout=30,
         )
         if result.returncode != 0:
-            logger.warning(f"ffprobe failed, defaulting to 30fps: {result.stderr}")
-            return 30.0
+            logger.warning(f"ffprobe failed, using defaults: {result.stderr}")
+            return info
 
-        # r_frame_rate comes as "num/den" like "30/1" or "30000/1001"
-        rate_str = result.stdout.strip()
-        if "/" in rate_str:
-            num, den = rate_str.split("/")
-            return float(num) / float(den)
-        return float(rate_str)
+        # Output format: width,height,r_frame_rate (e.g. "1080,1920,30/1")
+        parts = result.stdout.strip().split(",")
+        if len(parts) >= 3:
+            info["width"] = int(parts[0])
+            info["height"] = int(parts[1])
+            rate_str = parts[2]
+            if "/" in rate_str:
+                num, den = rate_str.split("/")
+                info["framerate"] = float(num) / float(den)
+            else:
+                info["framerate"] = float(rate_str)
+        elif len(parts) >= 1:
+            rate_str = parts[-1]
+            if "/" in rate_str:
+                num, den = rate_str.split("/")
+                info["framerate"] = float(num) / float(den)
+
     except Exception as e:
-        logger.warning(f"Could not determine framerate, defaulting to 30fps: {e}")
-        return 30.0
+        logger.warning(f"Could not determine video info, using defaults: {e}")
+
+    return info
 
 
-def extract_frames(video_path: str, output_dir: str) -> float:
+def extract_frames(video_path: str, output_dir: str) -> dict:
     """
     Extract all frames from a video as PNG files.
 
-    Returns the detected frame rate.
+    Returns dict with framerate, width, height.
     """
     os.makedirs(output_dir, exist_ok=True)
 
-    framerate = get_video_framerate(video_path)
-    logger.info(f"Detected framerate: {framerate:.2f} fps")
+    video_info = get_video_info(video_path)
+    logger.info(f"Detected: {video_info['framerate']:.2f} fps, {video_info['width']}x{video_info['height']}")
 
     try:
         result = subprocess.run(
@@ -115,7 +128,7 @@ def extract_frames(video_path: str, output_dir: str) -> float:
 
     frame_count = len(glob.glob(os.path.join(output_dir, "frame_*.png")))
     logger.info(f"Extracted {frame_count} frames to {output_dir}")
-    return framerate
+    return video_info
 
 
 def extract_audio(video_path: str, output_path: str) -> Optional[str]:
@@ -240,9 +253,14 @@ def reassemble_video(
     audio_path: Optional[str],
     output_path: str,
     framerate: float,
+    width: Optional[int] = None,
+    height: Optional[int] = None,
 ) -> str:
     """
     Stitch processed frames back into a video, optionally remuxing audio.
+    
+    Ensures output dimensions match original video (padded to even if needed
+    for yuv420p compatibility).
 
     Returns the output file path.
     """
@@ -260,6 +278,17 @@ def reassemble_video(
 
     if audio_path and os.path.exists(audio_path):
         cmd.extend(["-i", audio_path, "-c:a", "aac", "-shortest"])
+
+    # Use scale filter to ensure even dimensions (yuv420p requires this)
+    # -2 means "round to nearest even number"
+    if width and height:
+        # Pad to even dimensions if needed
+        even_w = width if width % 2 == 0 else width + 1
+        even_h = height if height % 2 == 0 else height + 1
+        cmd.extend(["-vf", f"scale={even_w}:{even_h}:flags=lanczos"])
+    else:
+        # If we don't know the original size, just pad to even
+        cmd.extend(["-vf", "pad=ceil(iw/2)*2:ceil(ih/2)*2"])
 
     cmd.extend([
         "-c:v", "libx264",
@@ -374,7 +403,8 @@ def restore_video(
     try:
         # Step 1: Extract frames
         logger.info("Step 1/4: Extracting frames...")
-        framerate = extract_frames(input_path, raw_frames_dir)
+        video_info = extract_frames(input_path, raw_frames_dir)
+        framerate = video_info["framerate"]
 
         # Step 2: Extract audio
         logger.info("Step 2/4: Extracting audio...")
@@ -395,7 +425,11 @@ def restore_video(
 
         # Step 4: Reassemble video
         logger.info("Step 4/4: Reassembling video...")
-        reassemble_video(processed_frames_dir, extracted_audio, output_path, framerate)
+        reassemble_video(
+            processed_frames_dir, extracted_audio, output_path, framerate,
+            width=video_info.get("width"),
+            height=video_info.get("height"),
+        )
 
         logger.info(f"Restoration complete: {output_path}")
         return output_path

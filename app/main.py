@@ -45,13 +45,11 @@ st.set_page_config(
 st.title("🎬 Video Filter Restoration")
 st.markdown(
     """
-    **Upload a filtered/posterized video** and this tool will restore it as close 
-    to natural as possible — removing color casts, reducing blocky posterization, 
-    and boosting contrast and clarity.
+    Upload a filtered/posterized video and this tool will clean it up — 
+    removing color casts, reducing blockiness, and restoring contrast.
     
-    ⚠️ **Important:** This produces a *cleaned approximation*, not a perfect reversal. 
-    Detail permanently lost to heavy posterization or beauty-smoothing filters 
-    cannot be mathematically recovered — only approximated.
+    > ⚠️ This produces a *cleaned approximation*. Detail lost to heavy 
+    > posterization cannot be perfectly recovered.
     """
 )
 
@@ -73,23 +71,25 @@ if "original_path" not in st.session_state:
     st.session_state.original_path = None
 if "processing_done" not in st.session_state:
     st.session_state.processing_done = False
+if "original_filename" not in st.session_state:
+    st.session_state.original_filename = None
 
 # ─── Sidebar Controls ────────────────────────────────────────────────────────
 
 st.sidebar.header("⚙️ Processing Parameters")
-st.sidebar.markdown("Adjust these to fine-tune restoration for your specific video.")
+st.sidebar.markdown("Adjust these to fine-tune the restoration.")
 
 unmirror = st.sidebar.checkbox(
-    "🔄 Video appears mirrored/flipped — un-mirror it",
+    "🔄 Un-mirror (flip horizontally)",
     value=False,
-    help="Check this if text in the video appears backwards or the orientation is flipped.",
+    help="Check if text appears backwards in the video.",
 )
 
 detint_strength = st.sidebar.slider(
     "De-tint Strength",
     min_value=0.0,
     max_value=1.0,
-    value=0.9,
+    value=0.85,
     step=0.05,
     help="How aggressively to remove green/yellow color cast. 1.0 = full removal.",
 )
@@ -98,36 +98,102 @@ saturation_boost = st.sidebar.slider(
     "Saturation Boost",
     min_value=0.5,
     max_value=2.5,
-    value=1.35,
+    value=1.3,
     step=0.05,
-    help="Multiplier for color saturation. Higher = more vivid colors.",
+    help="Color vibrancy multiplier. Higher = more vivid.",
 )
 
 contrast_strength = st.sidebar.slider(
     "Contrast Strength (CLAHE)",
     min_value=0.5,
     max_value=5.0,
-    value=2.5,
+    value=2.0,
     step=0.25,
-    help="Adaptive contrast clip limit. Higher = stronger contrast restoration.",
+    help="Adaptive contrast intensity. Higher = stronger contrast.",
 )
 
 sharpen_amount = st.sidebar.slider(
     "Sharpening Amount",
     min_value=0.0,
-    max_value=3.0,
-    value=1.2,
+    max_value=2.0,
+    value=0.8,
     step=0.1,
-    help="Unsharp mask strength. Higher = sharper but may introduce artifacts.",
+    help="Edge sharpening. Keep low to avoid artifacts on faces.",
 )
+
+st.sidebar.markdown("---")
 
 # ─── Reset Button ────────────────────────────────────────────────────────────
 
-if st.sidebar.button("🔄 Reset / Process Another Video"):
+if st.sidebar.button("🔄 Reset / New Video"):
     st.session_state.restored_path = None
     st.session_state.original_path = None
     st.session_state.processing_done = False
+    st.session_state.original_filename = None
     st.rerun()
+
+# ─── Show Completed Result (if already processed) ────────────────────────────
+
+if st.session_state.processing_done and st.session_state.restored_path:
+    restored_path = st.session_state.restored_path
+    original_path = st.session_state.original_path
+    original_filename = st.session_state.original_filename or "video.mp4"
+
+    # ── Completed Section ──
+    st.success("✅ Video restoration complete!")
+
+    st.subheader("📺 Restored Result")
+    if os.path.exists(restored_path):
+        st.video(restored_path)
+    else:
+        st.warning("Restored file no longer exists. Please process again.")
+
+    # Download buttons
+    st.markdown("### ⬇️ Downloads")
+    col1, col2 = st.columns(2)
+
+    with col1:
+        if os.path.exists(restored_path):
+            with open(restored_path, "rb") as f:
+                st.download_button(
+                    label="⬇️ Download Restored Video",
+                    data=f.read(),
+                    file_name=f"restored_{original_filename}",
+                    mime="video/mp4",
+                    type="primary",
+                )
+
+    with col2:
+        if original_path and os.path.exists(original_path):
+            with open(original_path, "rb") as f:
+                st.download_button(
+                    label="⬇️ Download Original Upload",
+                    data=f.read(),
+                    file_name=original_filename,
+                    mime="video/mp4",
+                )
+
+    # Before / After comparison
+    st.markdown("---")
+    st.subheader("🔍 Before & After Comparison")
+    col_before, col_after = st.columns(2)
+
+    with col_before:
+        st.markdown("**Original (filtered)**")
+        if original_path and os.path.exists(original_path):
+            st.video(original_path)
+
+    with col_after:
+        st.markdown("**Restored**")
+        if os.path.exists(restored_path):
+            st.video(restored_path)
+
+    st.info(
+        "💡 Not happy with the result? Adjust the sliders in the sidebar "
+        "and click **Reset** to try again with different settings."
+    )
+
+    st.stop()  # Don't show the upload section when results are displayed
 
 # ─── File Upload ──────────────────────────────────────────────────────────────
 
@@ -135,7 +201,7 @@ st.markdown("---")
 uploaded_file = st.file_uploader(
     "Upload a filtered video",
     type=SUPPORTED_TYPES,
-    help=f"Supported formats: {', '.join(SUPPORTED_TYPES)}. Max size: {MAX_FILE_SIZE_MB}MB.",
+    help=f"Supported: {', '.join(SUPPORTED_TYPES)}. Max: {MAX_FILE_SIZE_MB}MB.",
 )
 
 if uploaded_file is not None:
@@ -144,9 +210,8 @@ if uploaded_file is not None:
     if file_size_mb > MAX_FILE_SIZE_MB:
         st.error(
             f"❌ File too large ({file_size_mb:.1f}MB). "
-            f"Maximum supported size is {MAX_FILE_SIZE_MB}MB. "
-            f"Frame-by-frame processing is very slow on large files — "
-            f"please trim your video first."
+            f"Max supported: {MAX_FILE_SIZE_MB}MB. "
+            f"Please trim your video first."
         )
         st.stop()
 
@@ -159,85 +224,48 @@ if uploaded_file is not None:
         f.write(uploaded_file.getbuffer())
 
     st.session_state.original_path = input_path
+    st.session_state.original_filename = original_filename
 
     # Preview original
-    st.subheader("📹 Original Upload")
+    st.subheader("📹 Uploaded Video Preview")
     st.video(input_path)
-    st.caption(f"File: {original_filename} ({file_size_mb:.1f}MB)")
+    st.caption(f"{original_filename} — {file_size_mb:.1f}MB")
 
     # ─── Process Button ───────────────────────────────────────────────────
 
-    if not st.session_state.processing_done:
-        if st.button("🚀 Restore Video", type="primary"):
-            output_filename = f"restored_{original_filename}"
-            output_path = os.path.join(tmp_dir, output_filename)
+    if st.button("🚀 Restore Video", type="primary"):
+        output_filename = f"restored_{original_filename}"
+        # Ensure output is .mp4 for browser compatibility
+        if not output_filename.endswith(".mp4"):
+            output_filename = os.path.splitext(output_filename)[0] + ".mp4"
+        output_path = os.path.join(tmp_dir, output_filename)
 
-            progress_bar = st.progress(0, text="Starting restoration...")
-            status_text = st.empty()
+        progress_bar = st.progress(0, text="Starting restoration...")
 
-            def update_progress(current: int, total: int):
-                pct = current / total
-                progress_bar.progress(pct, text=f"Processing frame {current}/{total}")
+        def update_progress(current: int, total: int):
+            pct = current / total
+            progress_bar.progress(pct, text=f"Processing frame {current}/{total}")
 
-            try:
-                with st.spinner("Processing video... This may take a while for longer clips."):
-                    restore_video(
-                        input_path=input_path,
-                        output_path=output_path,
-                        unmirror=unmirror,
-                        detint_strength=detint_strength,
-                        clahe_clip_limit=contrast_strength,
-                        saturation_multiplier=saturation_boost,
-                        sharpen_amount=sharpen_amount,
-                        progress_callback=update_progress,
-                    )
+        try:
+            restore_video(
+                input_path=input_path,
+                output_path=output_path,
+                unmirror=unmirror,
+                detint_strength=detint_strength,
+                clahe_clip_limit=contrast_strength,
+                saturation_multiplier=saturation_boost,
+                sharpen_amount=sharpen_amount,
+                progress_callback=update_progress,
+            )
 
-                st.session_state.restored_path = output_path
-                st.session_state.processing_done = True
-                progress_bar.progress(1.0, text="✅ Done!")
-                st.rerun()
+            st.session_state.restored_path = output_path
+            st.session_state.processing_done = True
+            progress_bar.progress(1.0, text="✅ Done!")
+            st.rerun()
 
-            except RuntimeError as e:
-                st.error(f"❌ Processing failed: {e}")
-                logger.error(f"Processing failed: {e}", exc_info=True)
-            except Exception as e:
-                st.error(f"❌ Unexpected error: {e}")
-                logger.error(f"Unexpected error: {e}", exc_info=True)
-
-    # ─── Results Display ──────────────────────────────────────────────────
-
-    if st.session_state.processing_done and st.session_state.restored_path:
-        restored_path = st.session_state.restored_path
-
-        st.markdown("---")
-        st.subheader("✅ Restored Video")
-        st.video(restored_path)
-
-        # Download buttons side by side
-        col1, col2 = st.columns(2)
-
-        with col1:
-            if os.path.exists(restored_path):
-                with open(restored_path, "rb") as f:
-                    st.download_button(
-                        label="⬇️ Download Restored Video",
-                        data=f.read(),
-                        file_name=f"restored_{original_filename}",
-                        mime="video/mp4",
-                    )
-
-        with col2:
-            if os.path.exists(input_path):
-                with open(input_path, "rb") as f:
-                    st.download_button(
-                        label="⬇️ Download Original Upload",
-                        data=f.read(),
-                        file_name=original_filename,
-                        mime="video/mp4",
-                    )
-
-        st.info(
-            "💡 **Tip:** Compare the original and restored versions side by side. "
-            "If the result still looks too green or too flat, adjust the sliders "
-            "in the sidebar and process again."
-        )
+        except RuntimeError as e:
+            st.error(f"❌ Processing failed: {e}")
+            logger.error(f"Processing failed: {e}", exc_info=True)
+        except Exception as e:
+            st.error(f"❌ Unexpected error: {e}")
+            logger.error(f"Unexpected error: {e}", exc_info=True)

@@ -4,11 +4,15 @@ Frame-level video restoration processing.
 Applies a sequence of corrections to a single BGR frame to reverse
 common "beauty filter" / posterization effects:
   1. Optional horizontal un-mirror
-  2. Bilateral smoothing to reduce posterization blockiness
+  2. Light bilateral smoothing to reduce posterization blockiness
   3. LAB-space de-tinting (removes green/yellow color cast)
   4. CLAHE adaptive contrast on the L channel
   5. HSV saturation boost
   6. Unsharp-mask sharpening
+
+IMPORTANT: The bilateral filter is intentionally light — too much smoothing
+destroys facial features and makes the output look worse than the input.
+The goal is subtle de-blocking, NOT aggressive smoothing.
 
 All numeric parameters are exposed as module-level constants for easy tuning.
 """
@@ -18,26 +22,26 @@ import cv2
 
 # ─── Tunable Parameters ──────────────────────────────────────────────────────
 
-# Bilateral filter: reduces blocky posterization while preserving edges.
-# Applied twice in sequence for stronger effect.
-BILATERAL_D = 9                 # Pixel neighborhood diameter
-BILATERAL_SIGMA_COLOR = 75      # Filter sigma in color space
-BILATERAL_SIGMA_SPACE = 75      # Filter sigma in coordinate space
+# Bilateral filter: LIGHT pass to reduce posterization edges.
+# Only applied ONCE with conservative settings to preserve face detail.
+BILATERAL_D = 7                 # Pixel neighborhood diameter (smaller = faster + preserves detail)
+BILATERAL_SIGMA_COLOR = 50      # Filter sigma in color space (lower = preserves edges better)
+BILATERAL_SIGMA_SPACE = 50      # Filter sigma in coordinate space
 
 # De-tint: shifts LAB A/B channels toward neutral (128).
 # 1.0 = full neutralization, 0.0 = no change.
 DETINT_STRENGTH = 0.9
 
 # CLAHE: adaptive histogram equalization on L channel.
-CLAHE_CLIP_LIMIT = 2.5         # Contrast limiting threshold
+CLAHE_CLIP_LIMIT = 2.0         # Contrast limiting threshold
 CLAHE_GRID_SIZE = (8, 8)       # Tile grid size for local adaptation
 
 # Saturation boost: multiplier on HSV S channel.
 SATURATION_MULTIPLIER = 1.35
 
 # Unsharp mask: sharpening via Gaussian blur difference.
-SHARPEN_KERNEL_SIZE = (5, 5)   # Gaussian blur kernel for the mask
-SHARPEN_AMOUNT = 1.2           # Strength of sharpening (0 = none)
+SHARPEN_KERNEL_SIZE = (3, 3)   # Gaussian blur kernel for the mask (smaller = finer detail)
+SHARPEN_AMOUNT = 0.8           # Strength of sharpening (reduced to avoid artifacts)
 
 
 # ─── Processing Functions ────────────────────────────────────────────────────
@@ -71,7 +75,7 @@ def process_frame(
     Returns
     -------
     np.ndarray
-        Processed BGR frame.
+        Processed BGR frame with same dimensions as input.
     """
     if frame is None or frame.size == 0:
         raise ValueError("Empty or None frame passed to process_frame")
@@ -82,10 +86,7 @@ def process_frame(
     if unmirror:
         result = cv2.flip(result, 1)  # 1 = horizontal flip
 
-    # Step 2: Bilateral smoothing (applied twice for stronger de-posterization)
-    result = cv2.bilateralFilter(
-        result, BILATERAL_D, BILATERAL_SIGMA_COLOR, BILATERAL_SIGMA_SPACE
-    )
+    # Step 2: LIGHT bilateral smoothing (ONE pass only — preserves facial detail)
     result = cv2.bilateralFilter(
         result, BILATERAL_D, BILATERAL_SIGMA_COLOR, BILATERAL_SIGMA_SPACE
     )
