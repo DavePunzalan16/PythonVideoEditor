@@ -26,6 +26,10 @@ import cv2
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
 from app.pipeline.frame_processor import process_frame
+from app.pipeline.face_restore import (
+    is_face_restore_available,
+    restore_and_normalize,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -183,6 +187,8 @@ def process_all_frames(
     clahe_clip_limit: float = 2.5,
     saturation_multiplier: float = 1.35,
     sharpen_amount: float = 1.2,
+    face_restore: bool = False,
+    face_blend_weight: float = 0.7,
     progress_callback: Optional[Callable[[int, int], None]] = None,
 ) -> int:
     """
@@ -204,6 +210,10 @@ def process_all_frames(
         Saturation boost factor.
     sharpen_amount : float
         Unsharp mask strength.
+    face_restore : bool
+        Whether to apply AI face restoration (GFPGAN).
+    face_blend_weight : float
+        Blend weight for face restoration (0.0–1.0).
     progress_callback : callable, optional
         Called with (current_frame, total_frames) for progress reporting.
 
@@ -220,7 +230,15 @@ def process_all_frames(
     if total == 0:
         raise RuntimeError(f"No frames found in {input_dir}")
 
-    logger.info(f"Processing {total} frames...")
+    # Check face restore availability
+    if face_restore and not is_face_restore_available():
+        logger.warning(
+            "Face restoration requested but GFPGAN not installed. "
+            "Skipping face restoration. Install: pip install gfpgan torch"
+        )
+        face_restore = False
+
+    logger.info(f"Processing {total} frames (face_restore={face_restore})...")
 
     for i, frame_path in enumerate(frame_files, 1):
         frame = cv2.imread(frame_path)
@@ -228,6 +246,7 @@ def process_all_frames(
             logger.warning(f"Could not read frame: {frame_path}, skipping.")
             continue
 
+        # Step 1: Color correction pipeline
         processed = process_frame(
             frame,
             unmirror=unmirror,
@@ -236,6 +255,13 @@ def process_all_frames(
             saturation_multiplier=saturation_multiplier,
             sharpen_amount=sharpen_amount,
         )
+
+        # Step 2: AI face restoration (after color correction, before upscale)
+        if face_restore:
+            processed = restore_and_normalize(
+                processed,
+                blend_weight=face_blend_weight,
+            )
 
         output_path = os.path.join(output_dir, os.path.basename(frame_path))
         cv2.imwrite(output_path, processed)
@@ -339,6 +365,8 @@ def restore_video(
     clahe_clip_limit: float = 2.5,
     saturation_multiplier: float = 1.35,
     sharpen_amount: float = 1.2,
+    face_restore: bool = False,
+    face_blend_weight: float = 0.7,
     progress_callback: Optional[Callable[[int, int], None]] = None,
 ) -> str:
     """
@@ -360,6 +388,10 @@ def restore_video(
         Saturation boost multiplier.
     sharpen_amount : float
         Unsharp mask strength.
+    face_restore : bool
+        Whether to run AI face restoration (GFPGAN).
+    face_blend_weight : float
+        Blend weight for face restoration (0.0=original, 1.0=full AI).
     progress_callback : callable, optional
         Progress reporting function(current, total).
 
@@ -420,6 +452,8 @@ def restore_video(
             clahe_clip_limit=clahe_clip_limit,
             saturation_multiplier=saturation_multiplier,
             sharpen_amount=sharpen_amount,
+            face_restore=face_restore,
+            face_blend_weight=face_blend_weight,
             progress_callback=progress_callback,
         )
 

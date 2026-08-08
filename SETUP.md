@@ -89,7 +89,21 @@ The app will open in your browser at http://localhost:8501.
 
 ---
 
-## 4. Optional: AI Upscaling (GPU recommended)
+## 4. Optional: AI Face Restoration (GPU recommended)
+
+For the face reconstruction feature (GFPGAN):
+
+```bash
+pip install gfpgan torch torchvision basicsr facexlib
+```
+
+**Note:** This requires a CUDA-capable GPU for practical speed. CPU inference works but is very slow (~5-10 seconds per frame vs <1 second on GPU).
+
+The model weights (~300MB) are downloaded automatically on first use.
+
+---
+
+## 5. Optional: AI Upscaling (GPU recommended)
 
 For the HD upscale feature, install additional dependencies:
 

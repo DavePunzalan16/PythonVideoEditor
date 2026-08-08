@@ -23,8 +23,11 @@ This app takes video that has been processed with heavy "beauty" or artistic fil
 ## Quick Start
 
 ```bash
-# Install dependencies
+# Install base dependencies
 pip install -r requirements.txt
+
+# For AI face restoration (GPU recommended):
+pip install gfpgan torch torchvision basicsr facexlib
 
 # Ensure ffmpeg is installed (see SETUP.md for platform-specific instructions)
 ffmpeg -version
@@ -35,6 +38,17 @@ streamlit run app/main.py
 
 See [SETUP.md](SETUP.md) for detailed installation instructions.
 
+## AI Face Restoration (Steps 51–58)
+
+When a video has been so heavily posterized that the face is reduced to a flat blob shape (no visible eyes, nose, texture), color correction alone cannot fix it. The "Generate realistic face" feature uses GFPGAN to reconstruct a plausible human face.
+
+**Important limitations:**
+- This is **generic AI reconstruction** — it generates a plausible face, it does NOT recover the exact original person's features (that data no longer exists in the file)
+- It does **not** accept reference photos of specific people — that would be identity-swap functionality, which is intentionally excluded from this project
+- GPU strongly recommended — CPU works but is very slow
+- Results vary by input quality. Heavily destroyed inputs produce less accurate reconstructions
+- Includes skin-tone normalization to prevent green/yellow residue on restored faces
+
 ## Project Structure
 
 ```
@@ -42,7 +56,8 @@ filter-restore-app/
 ├── app/
 │   ├── main.py                 # Streamlit UI entry point
 │   ├── pipeline/
-│   │   ├── frame_processor.py  # Single-frame restoration logic
+│   │   ├── frame_processor.py  # Single-frame color restoration logic
+│   │   ├── face_restore.py     # AI face restoration (GFPGAN + skin tone)
 │   │   ├── video_pipeline.py   # Full video processing orchestration
 │   │   └── upscale.py          # Optional AI upscaling (Real-ESRGAN)
 │   └── utils/

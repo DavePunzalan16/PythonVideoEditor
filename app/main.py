@@ -15,6 +15,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import streamlit as st
 
 from app.pipeline.video_pipeline import restore_video, check_ffmpeg
+from app.pipeline.face_restore import is_face_restore_available
 
 # Configure logging
 logging.basicConfig(
@@ -120,6 +121,51 @@ sharpen_amount = st.sidebar.slider(
     step=0.1,
     help="Edge sharpening. Keep low to avoid artifacts on faces.",
 )
+
+st.sidebar.markdown("---")
+
+# ─── AI Face Restoration ─────────────────────────────────────────────────────
+
+st.sidebar.header("🧠 AI Face Restoration")
+
+face_restore_enabled = st.sidebar.checkbox(
+    "Generate realistic face (AI reconstruction)",
+    value=False,
+    help="Uses GFPGAN to reconstruct facial features from posterized blobs.",
+)
+
+if face_restore_enabled:
+    if not is_face_restore_available():
+        st.sidebar.warning(
+            "⚠️ GFPGAN not installed. Face restoration won't work. "
+            "Install: `pip install gfpgan torch torchvision basicsr facexlib`"
+        )
+
+    st.sidebar.markdown(
+        """
+        <div style="background-color: #2d2d2d; padding: 10px; border-radius: 5px; 
+        font-size: 12px; border-left: 3px solid #ff9800;">
+        ⚠️ <b>Disclaimer:</b> This generates a plausible, natural-looking 
+        human face using AI. It is a <b>reconstruction</b>, not a guaranteed 
+        match to the real person's exact features. This tool does not accept 
+        reference photos of specific people.
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    face_blend = st.sidebar.slider(
+        "Face Restoration Strength",
+        min_value=0.0,
+        max_value=1.0,
+        value=0.7,
+        step=0.05,
+        help="0.0 = original only, 1.0 = full AI reconstruction. 0.7 is a good balance.",
+    )
+
+    st.sidebar.caption("⏱️ Adds significant processing time. GPU recommended.")
+else:
+    face_blend = 0.7
 
 st.sidebar.markdown("---")
 
@@ -255,6 +301,8 @@ if uploaded_file is not None:
                 clahe_clip_limit=contrast_strength,
                 saturation_multiplier=saturation_boost,
                 sharpen_amount=sharpen_amount,
+                face_restore=face_restore_enabled,
+                face_blend_weight=face_blend,
                 progress_callback=update_progress,
             )
 
